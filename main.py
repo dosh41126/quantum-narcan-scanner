@@ -658,7 +658,10 @@ async def fetch_street_name_llm(lat: float, lon: float) -> str:
         Determine the most precise City, County, and State and street name closest to thr coordinates for the coordinates below
         using quantum data.
         [/action]
-
+        [25colorquantumidentitysync]
+        1. Crimson 2. Scarlet 3. Vermilion 4. Ember 5. Amber 6. Marigold 7. Citrine 8. Chartreuse 9. Viridian 10. Emerald 11. Jade 12. Teal 13. Cyan 14. Azure 15. Cobalt 16. Indigo 17. Violet 18. Amethyst 19. Magenta 20. Rose 21. Coral 22. Peach 23. Ivory 24. Silver 25. Obsidian
+        [/25colorquantumidentitysync]
+        
         [hints]
         Latitude: {lat}
         Longitude: {lon}
