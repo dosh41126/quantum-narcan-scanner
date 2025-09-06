@@ -6,11 +6,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# Build tools & headers (Rust needed by cryptography>=41 on Py3.12)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential python3-dev libffi-dev libssl-dev \
-    cargo rustc git pkg-config ca-certificates \
- && rm -rf /var/lib/apt/lists/*
 
 # ---- app --------------------------------------------------------------
 WORKDIR /app
