@@ -656,47 +656,22 @@ async def fetch_street_name_llm(lat: float, lon: float) -> str:
         [action]
         You are an Advanced Hypertime Nanobot Reverse-Geocoder with quantum synergy.
         Determine the most precise City, County, and State for the coordinates below
-        using quantum data, known city proximity, and country hints. Discard any result
-        with reliability below 98%.
+        using quantum data.
         [/action]
 
-        [coordinates]
+        [hints]
         Latitude: {lat}
         Longitude: {lon}
-        [/coordinates]
+       
+        QuantumState: {quantum_state_str}
+        [hints]
 
-        [local_context]
-        Nearest known city (heuristic): {city_hint}
-        Distance to city: {distance_hint}
-        Likely country code: {likely_country_code}
-        Quantum state data: {quantum_state_str}
-        [/local_context]
+        [example]
+        Nearest Road/Street:
+        Nearest City:
+        Nearest State:
+        [/example]
 
-        [quality_checks]
-        1) Triple-check that the city belongs to the stated county and the county belongs to the stated state.
-        2) Triple-check that the state is valid for the likely country code.
-        3) Triple-check spelling of proper nouns.
-        4) If any check fails or confidence < 98%, return "Unknown Location".
-        [/quality_checks]
-
-        [multiverse_extension]
-        Generate XYZT multiverse coordinates in the QID25 frame aligned to this location and quantum state.
-        Use four floating point values with 3 decimals precision:
-        X, Y, Z in QID-units. T is the resonance timestamp, positive for forward resonance.
-        The XYZT values must be consistent with the chosen location and quantum_state_data.
-        [/multiverse_extension]
-
-        [example_output]
-        City: [CityHere]
-        County: [CountyHere]
-        State: [StateHere]
-        XYZT: [XHere, YHere, ZHere, THere]
-        Confidence: [ConfidencePercent]%
-        [/example_output]
-
-        Fill in the placeholders [CityHere], [CountyHere], [StateHere], [XHere], [YHere], [ZHere], [THere], and [ConfidencePercent].
-        Output must match the example format exactly, one field per line, with no extra commentary.
-        If accuracy is below 98% after triple-checks, respond with "Unknown Location".
         """
 
         openai_result = await run_openai_completion(llm_prompt)
@@ -1186,43 +1161,39 @@ async def scan_debris_for_route(
         lat, lon, vehicle_type, destination, user_id
     )
 
-    # Always use OpenAI
+   
     model_used = "OpenAI"
 
-    # 1) Resource usage
+   
     try:
         cpu_usage, ram_usage = get_cpu_ram_usage()
     except Exception:
         cpu_usage, ram_usage = 0.0, 0.0
 
-    # 2) Quantum scan
+   
     try:
         quantum_results = quantum_hazard_scan(cpu_usage, ram_usage)
     except Exception:
         quantum_results = "Scan Failed"
 
-    # 3) Reverse-geocode street name via OpenAI
+   
     try:
         street_name = await fetch_street_name_llm(lat, lon)
     except Exception:
         street_name = "Unknown Location"
 
-    # 4) Build the OpenAI-only prompt
+  
     openai_prompt = f"""
-[action] You are a Quantum Hypertime Nanobot Road Hazard Scanner tasked with analyzing the road conditions and providing a detailed report on any detected hazards, debris, or potential collisions. Leverage quantum data and environmental factors to ensure a comprehensive scan. [/action]
+[action] You are a Quantum Hypertime Nanobot Road Hazard Scanner tasked with analyzing the road conditions and providing a detailed report on any detected hazards, debris, or potential collisions. Leverage quantum data and environmental factors to ensure a comprehensive scan. Triple Check for real world accurate risk tuning the user's 25 color Quantum Identity[/action]
 [locationreport]
 Current coordinates: Latitude {lat}, Longitude {lon}
 General Area Name: {street_name}
 Vehicle Type: {vehicle_type}
 Destination: {destination}
 [/locationreport]
-[quantumreport]
-Quantum Scan State: {quantum_results}
-System Performance: CPU Usage: {cpu_usage}%, RAM Usage: {ram_usage}%
-[/quantumreport]
-[reducefalsepositivesandnegatives]
-ACT By syncing to multiverse configurations that are more accurate
-[/reducefalsepositivesandnegatives]
+
+Quantum State: {quantum_results}
+
 
 Please assess the following:
 1. **Hazards**: Evaluate the road for any potential hazards that might impact operating vehicles.
@@ -1235,11 +1206,11 @@ Please assess the following:
 [replyexample] Include recommendations for drivers, suggested detours only if required, and urgency levels based on the findings. [/replyexample]
 """
 
-    # 5) Call OpenAI
+    
     report = await run_openai_completion(openai_prompt) or "OpenAI failed to respond."
     report = report.strip()
 
-    # 6) Determine harm level (if needed downstream)
+    
     harm_level = calculate_harm_level(report)
 
     logger.debug("Exiting scan_debris_for_route with model_used=%s", model_used)
@@ -1275,7 +1246,7 @@ async def run_openai_completion(prompt):
                     "Authorization": f"Bearer {openai_api_key}"
                 }
                 data = {
-                    "model": "gpt-4o",
+                    "model": "gpt-5",
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.7
                 }
@@ -2169,9 +2140,7 @@ def logout():
     session.pop('username', None)
     session.pop('is_admin', None)
     return redirect(url_for('home'))
-
-
-    
+  
 @app.route('/view_report/<int:report_id>', methods=['GET'])
 def view_report(report_id):
     if 'username' not in session:
