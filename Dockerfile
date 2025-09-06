@@ -1,89 +1,108 @@
-# ---- base -------------------------------------------------------------
-FROM python:3.12-slim
+# Use a lightweight Python image as the base
+FROM python:3.11-slim
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    PIP_NO_CACHE_DIR=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+# (Optional but nice) safer defaults
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
 
-
-# ---- app --------------------------------------------------------------
+# Set working directory
 WORKDIR /app
 
-# Upgrade pip tooling first, then install deps (prefer wheels)
+# Copy requirements file and install dependencies
 COPY requirements.txt .
-RUN python -m pip install --upgrade pip setuptools wheel \
- && pip install --prefer-binary -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy your source
+# Copy the rest of the application code
 COPY . .
 
-# Unprivileged user and static dir perms
-RUN useradd -ms /bin/bash appuser \
- && mkdir -p /app/static \
- && chmod 755 /app/static \
- && chown -R appuser:appuser /app
+# Ensure static assets are accessible
+RUN mkdir -p /app/static && chmod 755 /app/static
 
-# ---- per-build keygen (KEEPING THIS) ---------------------------------
-# Writes strong KDF inputs & flags to /etc/qrs.env (owned by appuser)
-RUN python - <<'PY'
-import secrets, base64, pwd, grp, pathlib, os
-def b64(n): return base64.b64encode(secrets.token_bytes(n)).decode()
-env = {
-  # app secret at import time
-  "INVITE_CODE_SECRET_KEY": secrets.token_hex(32),
-  # KDF inputs — changing these breaks old ciphertexts (intended)
-  "ENCRYPTION_PASSPHRASE": base64.urlsafe_b64encode(secrets.token_bytes(48)).decode().rstrip("="),
-  "QRS_SALT_B64": b64(32),
-  # behavior flags (NO OQS → STRICT_PQ2_ONLY must be 0)
-  "STRICT_PQ2_ONLY": "0",
-  # enable sealed store if you want it active by default
-  "QRS_ENABLE_SEALED": "1",
-  # keep session key rotation on
-  "QRS_ROTATE_SESSION_KEY": "1",
-}
-p = pathlib.Path("/etc/qrs.env")
-with p.open("w") as f:
-    for k, v in env.items():
-        f.write(f'export {k}="{v}"\n')
-uid = pwd.getpwnam("appuser").pw_uid
-gid = grp.getgrnam("appuser").gr_gid
-os.chown("/etc/qrs.env", uid, gid)
-os.chmod("/etc/qrs.env", 0o600)
-PY
+# Create a non-root user for security
+RUN useradd -ms /bin/bash appuser
 
-# ---- runtime entrypoint ----------------------------------------------
-# Loads /etc/qrs.env and sanity-checks required secrets.
-# By default we *also* force new keypairs each start; comment out the
-# 'unset' block below if you prefer to keep the same ones between restarts.
+# Secure directory for encryption keys
+RUN mkdir -p /home/appuser/.keys && chmod 700 /home/appuser/.keys \
+ && chown -R appuser:appuser /home/appuser/.keys
+
+# Secure directory for database storage
+RUN mkdir -p /home/appuser/data && chmod 700 /home/appuser/data \
+ && chown -R appuser:appuser /home/appuser/data
+
+# If a database file is needed, create it with appropriate permissions
+RUN touch /home/appuser/data/secure_data.db && chmod 600 /home/appuser/data/secure_data.db \
+ && chown appuser:appuser /home/appuser/data/secure_data.db
+
+# Set correct permissions for the /app directory
+RUN chmod -R 755 /app && chown -R appuser:appuser /app
+
+# --- entrypoint: load secrets from Docker/K8s secrets or generate at runtime ---
+#   - Will read /run/secrets/{INVITE_CODE_SECRET_KEY,ENCRYPTION_PASSPHRASE} if provided
+#   - If missing, securely generates new values and stores them only in an ephemeral runtime file
 COPY --chown=appuser:appuser <<'SH' /app/entrypoint.sh
 #!/usr/bin/env sh
 set -euo pipefail
+umask 077
 
-# Load per-build secrets
-if [ -f /etc/qrs.env ]; then
-  # shellcheck disable=SC1091
-  . /etc/qrs.env
+# Prefer orchestrator secrets (Docker/K8s):
+if [ -f /run/secrets/INVITE_CODE_SECRET_KEY ]; then
+  export INVITE_CODE_SECRET_KEY="$(tr -d '\r\n' < /run/secrets/INVITE_CODE_SECRET_KEY)"
+fi
+if [ -f /run/secrets/ENCRYPTION_PASSPHRASE ]; then
+  export ENCRYPTION_PASSPHRASE="$(tr -d '\r\n' < /run/secrets/ENCRYPTION_PASSPHRASE)"
 fi
 
-# Force fresh keypairs on every container start (optional).
-# Comment out this block if you want to reuse previous keypairs.
-unset QRS_X25519_PUB_B64 QRS_X25519_PRIV_ENC_B64 \
-      QRS_PQ_KEM_ALG QRS_PQ_PUB_B64 QRS_PQ_PRIV_ENC_B64 \
-      QRS_SIG_ALG QRS_SIG_PUB_B64 QRS_SIG_PRIV_ENC_B64 \
-      QRS_SEALED_B64
+# Generate at runtime only if not supplied externally
+if [ -z "${INVITE_CODE_SECRET_KEY:-}" ]; then
+  INVITE_CODE_SECRET_KEY="$(python - <<'PY'
+import secrets, sys
+sys.stdout.write(secrets.token_hex(32))  # 64 hex chars
+PY
+)"
+fi
 
-# Hard fail if mandatory inputs missing
-: "${ENCRYPTION_PASSPHRASE:?missing}"
-: "${QRS_SALT_B64:?missing}"
-: "${INVITE_CODE_SECRET_KEY:?missing}"
+if [ -z "${ENCRYPTION_PASSPHRASE:-}" ]; then
+  ENCRYPTION_PASSPHRASE="$(python - <<'PY'
+import secrets, base64, sys
+sys.stdout.write(base64.urlsafe_b64encode(secrets.token_bytes(48)).decode().rstrip("="))
+PY
+)"
+fi
+
+# Persist only for this container lifetime (no image layer): ~/.runtime/qrs.env
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/home/appuser/.runtime}"
+mkdir -p "$RUNTIME_DIR"
+chmod 700 "$RUNTIME_DIR"
+
+ENV_FILE="$RUNTIME_DIR/qrs.env"
+tmpf="$(mktemp "$RUNTIME_DIR/.qrs.env.XXXXXX")"
+{
+  printf 'export INVITE_CODE_SECRET_KEY="%s"\n' "$INVITE_CODE_SECRET_KEY"
+  printf 'export ENCRYPTION_PASSPHRASE="%s"\n' "$ENCRYPTION_PASSPHRASE"
+} > "$tmpf"
+chmod 600 "$tmpf"
+mv "$tmpf" "$ENV_FILE"
+
+# Load for current process & children
+# shellcheck disable=SC1090
+. "$ENV_FILE"
+
+# Harden a bit: disable core dumps (avoid secrets in cores)
+ulimit -c 0 || true
 
 exec "$@"
 SH
 RUN chmod +x /app/entrypoint.sh
 
+# Switch to the non-root user
 USER appuser
+
+# Expose the port that waitress will listen on
 EXPOSE 3000
 
+# Use the secure entrypoint that loads/generates secrets at runtime
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["waitress-serve","--host=0.0.0.0","--port=3000","--threads=4","main:app"]
+
+# Start the Flask application using waitress
+CMD ["waitress-serve", "--host=0.0.0.0", "--port=3000", "--threads=4", "main:app"]
