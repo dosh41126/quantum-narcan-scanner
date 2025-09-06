@@ -655,7 +655,7 @@ async def fetch_street_name_llm(lat: float, lon: float) -> str:
         llm_prompt = f"""
         [action]
         You are an Advanced Hypertime Nanobot Reverse-Geocoder with quantum synergy.
-        Determine the most precise City, County, and State for the coordinates below
+        Determine the most precise City, County, and State and street name closest to thr coordinates for the coordinates below
         using quantum data.
         [/action]
 
